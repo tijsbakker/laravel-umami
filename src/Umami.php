@@ -7,20 +7,20 @@ use Illuminate\Support\Facades\Http;
 
 class Umami
 {
-    use Websites;
     use Users;
+    use Websites;
 
     /**
      * authenticate the user with umami stats' server.
      *
-     * @param  array|null  $authData username and password
+     * @param  array|null  $authData  username and password
      */
-    public static function auth(array $authData = null): ?string
+    public static function auth(?array $authData = null): ?string
     {
         abort_if(
             config('umami.url') === null ||
             config('umami.username') === null ||
-            config('umami.password') === null, 421, 'please make sur to set all umami config');
+            config('umami.password') === null, 421, 'Please make sure to set all the required Umami configuration values.');
 
         if ($authData === null) {
             $authData = [
@@ -39,19 +39,61 @@ class Umami
     }
 
     /**
-     * @param $siteID string require site id
-     * @param $part string available parts: stats, active, pageviews, events, metrics. default:stats
-     * @param $options array|null available options: startAt, endAt, unit, tz, type
-     * @param $force bool force getting the result from the server, and clear the cache
+     * @param  $siteID  string require site id
+     * @param  $part  string available parts: stats, active, pageviews, events, metrics. default:stats
+     * @param  $options  array|null available options: startAt, endAt, unit, tz, type
+     * @param  $force  bool force getting the result from the server, and clear the cache
      *
      * @throws RequestException
      * @throws \Exception
      */
-    public static function query(string $siteID, string $part = 'stats', array $options = null, bool $force = false, $authData = null): mixed
+    public static function query(string $siteID, string $part = 'stats', ?array $options = null, bool $force = false, $authData = null): mixed
     {
         $options = self::setOptions($part, $options);
         $response = Http::withToken(self::auth($authData))
             ->get(config('umami.url').'/websites/'.$siteID.'/'.$part, $options);
+
+        $response->throw();
+
+        if ($force) {
+            cache()->forget(config('umami.cache_key').'.'.$siteID.'.'.$part);
+        }
+
+        return cache()->remember(config('umami.cache_key').'.'.$siteID.'.'.$part, config('umami.cache_ttl'), function () use ($response) {
+            return $response->json();
+        });
+    }
+
+    public static function events(string $siteID, ?array $options = null, bool $force = false, $authData = null): mixed
+    {
+        $part = 'event-data-events';
+
+        $options = self::setOptions($part, $options);
+        $options['websiteId'] = $siteID;
+
+        $response = Http::withToken(self::auth($authData))
+            ->get(config('umami.url').'/event-data/events', $options);
+
+        $response->throw();
+
+        if ($force) {
+            cache()->forget(config('umami.cache_key').'.'.$siteID.'.'.$part);
+        }
+
+        return cache()->remember(config('umami.cache_key').'.'.$siteID.'.'.$part, config('umami.cache_ttl'), function () use ($response) {
+            return $response->json();
+        });
+    }
+
+    public static function event_fields(string $siteID, ?array $options = null, bool $force = false, $authData = null): mixed
+    {
+        $part = 'event-data-fields';
+
+        $options = self::setOptions($part, $options);
+        $options['websiteId'] = $siteID;
+
+        $response = Http::withToken(self::auth($authData))
+            ->get(config('umami.url').'/event-data/fields', $options);
 
         $response->throw();
 
@@ -118,6 +160,12 @@ class Umami
                 'city' => null,
             ],
             'active' => [],
+            'event-data-events' => [
+                'event' => null,
+            ],
+            'event-data-fields' => [
+                //
+            ],
         ];
 
         $datesOptions = [
@@ -130,8 +178,8 @@ class Umami
         }
 
         $datesOptions = [
-            'startAt' => formatDate($options['startAt']),
-            'endAt' => formatDate($options['endAt']),
+            'startAt' => formatDate($options['start_at']),
+            'endAt' => formatDate($options['end_at']),
         ];
 
         return array_merge($defaultOptions[$part], array_merge($options, $datesOptions));
